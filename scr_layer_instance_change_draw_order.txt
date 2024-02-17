@@ -1,0 +1,558 @@
+/// enum to use as "move" argument for all of the functions below!!!
+enum MOVE
+	{
+	UP,
+	DOWN,
+	TOP,
+	BOTTOM
+	}
+
+
+/// @desc	Move an instance to a different layer with draw order options.
+/// @arg	{Id.Layer}							target_layer		Layer to move the instances to.
+/// @arg	{Id.Instance}						instance			Instance to move to the new layer.
+/// @arg	{Real}								move				Use MOVE.TOP or MOVE.BOTTOM... MOVE.UP and MOVE.DOWN require the 4th argument to be provided.
+/// @arg	{Id.Instance}						insert_relative_to	Optional (only works with MOVE.UP and MOVE.DOWN): Define an instance below or above which to insert "instance".
+/// @return {Bool}
+function layer_instance_change_layer(target_layer,instance,move,insert_relative_to=noone)
+	{
+	with (instance)
+		{
+		// check the starting layer
+		var _start_layer = layer;
+		if (layer_get_name(_start_layer) == "")
+		or (_start_layer == target_layer)
+			{
+			show_debug_message("layer_instance_change_layer() ERROR: "
+				+"layer provided is not good!")
+			return(false)
+			}
+	
+		// fetch the array containing all starting layer elements
+		var _arr = layer_get_all_elements(_start_layer);
+		var _emax = array_length(_arr);
+		if (_emax == 0)
+			{
+			show_debug_message("layer_instance_change_layer() ERROR: "
+				+"start layer is empty!")
+			return(false)
+			}
+	
+		// set up _insert_obj
+		var _insert_obj = noone;
+		with (insert_relative_to)
+			{
+			if (self.layer == target_layer)
+				_insert_obj = id
+			else
+				{
+				show_debug_message("layer_instance_change_layer() ERROR: "
+					+"insert object must be on the target layer!")
+				return(false)
+				}
+			}	
+	
+		// fetch the array containing all target layer elements
+		var _arr2 = layer_get_all_elements(target_layer);
+		var _emax2 = array_length(_arr2);
+		var _insert_obj_eid = -1;
+		var _insert_obj_pos = -1;
+		if (_emax2 == 0) // if target layer is empty, put instance on the top
+			{
+			_insert_obj = noone
+			move = MOVE.TOP
+			}
+		else if (_insert_obj != noone) // else find the position and elementid of _insert_obj (if provided)
+			{
+			for (var _e = 0; _e < _emax2; _e++)
+				if (layer_instance_get_instance(_arr2[_e]) == _insert_obj)
+					{
+					_insert_obj_eid = _arr2[_e]
+					_insert_obj_pos = _e
+					break;
+					}
+			}
+	
+		/* insert all instances into the new array
+		depending on the "move" argument */
+		var _insertpos;
+		switch (move)
+			{
+			case MOVE.UP: // insert above _insert_obj
+				_insertpos = _insert_obj_pos+1
+				array_insert(_arr2,_insertpos,instance)
+				break;
+			case MOVE.DOWN: // insert below _insert_obj
+				_insertpos = _insert_obj_pos
+				array_insert(_arr2,_insertpos,instance)
+				break;
+			case MOVE.TOP:
+				array_push(_arr2,instance)
+				break;
+			case MOVE.BOTTOM:
+				array_insert(_arr2,0,instance)
+				break;
+			default:
+				show_debug_message("layer_instance_change_layer() ERROR: "
+					+"illegal argument \"move\"! use enum MOVE.*")
+				return(false)
+				break;
+			}
+	
+		/*
+		re-add all of the instances of the target layer (including moved ones).
+		by default, gamemaker puts the last instance added onto the
+		very bottom of the layer (visually), so to counter that we
+		add them in reverse.
+		*/
+		var _inst;
+		_emax = array_length(_arr2)
+		for (var _e = _emax-1; _e >= 0; _e--)
+			{
+			if (is_handle(_arr2[_e]))
+				_inst = _arr2[_e]
+			else
+				_inst = layer_instance_get_instance(_arr2[_e])
+			if (_inst == -1)
+				continue;
+			layer_add_instance(target_layer,_inst)
+			}
+	
+		return(true)
+		}
+	}
+
+
+/// @desc	Move instances to a different layer while retaining their relative draw order.
+/// @arg	{Id.Layer}							target_layer		Layer to move the instances to.
+/// @arg	{Id.Instance,Array.<Id.Instance>}	instances			Instance(s) to move to the new layer.
+/// @arg	{Real}								move				Use MOVE.TOP or MOVE.BOTTOM... MOVE.UP and MOVE.DOWN require the 4th argument to be provided.
+/// @arg	{Id.Instance}						insert_relative_to	Optional (only works with MOVE.UP and MOVE.DOWN): Define an instance below or above which to insert other instnaces.
+/// @return {Bool}
+function layer_instances_change_layer(target_layer,instances,move,insert_relative_to=noone)
+	{
+	// put selected instances in an array
+	var _sel_inst_arr = [];
+	if (is_array(instances))
+		array_copy(_sel_inst_arr,-1,instances,0,array_length(instances))
+	else
+		_sel_inst_arr[0] = instances
+	
+	// define the starting layer for instances based on the first instance provided
+	var _start_layer = _sel_inst_arr[0].layer;
+	if (layer_get_name(_start_layer) == "")
+	or (_start_layer == target_layer)
+		{
+		show_debug_message("layer_instances_change_layer() ERROR: "
+			+"layer provided is not good!")
+		return(false)
+		}
+	
+	// fetch the array containing all starting layer elements
+	var _arr = layer_get_all_elements(_start_layer);
+	var _emax = array_length(_arr);
+	if (_emax == 0)
+		{
+		show_debug_message("layer_instances_change_layer() ERROR: "
+			+"start layer is empty!")
+		return(false)
+		}
+	
+	// set up _insert_obj
+	var _insert_obj = noone;
+	with (insert_relative_to)
+		{
+		if (self.layer == target_layer) // _insert_obj must be on the "target_layer"
+			_insert_obj = id
+		else
+			{
+			show_debug_message("layer_instance_change_layer() ERROR: "
+				+"insert object must be on the target layer!")
+			return(false)
+			}
+		}	
+	
+	/* move selected instances and their positons to new arrays
+	in the order they are currently drawn and delete them from
+	the original array */
+	var _sel_inst_arr_sorted = [];
+	var _sel_inst_arr_sorted_pos = [];
+	var _del_arr = [];
+	var _layerinstid;
+	for (var _e = 0; _e < _emax; _e++)
+		{
+		_layerinstid = layer_instance_get_instance(_arr[_e])
+		if (_layerinstid == -1)
+			continue;
+		if (array_contains(_sel_inst_arr,_layerinstid))
+			{
+			array_push(_sel_inst_arr_sorted,_arr[_e])
+			array_push(_sel_inst_arr_sorted_pos,_e)
+			array_push(_del_arr,_e)
+			}
+		}
+	var _dmax = array_length(_del_arr);
+	for (var _d = _dmax-1; _d >= 0; _d--)
+		array_delete(_arr,_del_arr[_d],1)
+	_emax = array_length(_arr)
+	var _smax = array_length(_sel_inst_arr_sorted);
+	if (_smax == 0)
+		{
+		show_debug_message("layer_instances_change_layer() ERROR: "
+			+"no instances provided, or they don't exist in the layer provided!")
+		return(false)
+		}
+	
+	// fetch the array containing all target layer elements
+	var _arr2 = layer_get_all_elements(target_layer);
+	var _emax2 = array_length(_arr2);
+	var _insert_obj_eid = -1;
+	var _insert_obj_pos = -1;
+	if (_emax2 == 0) // if target layer is empty, put instances on the top
+		{
+		_insert_obj = noone
+		move = MOVE.TOP
+		}
+	else if (_insert_obj != noone) // else find the position and elementid of _insert_obj (if provided)
+		{
+		for (var _e = 0; _e < _emax2; _e++)
+			if (layer_instance_get_instance(_arr2[_e]) == _insert_obj)
+				{
+				_insert_obj_eid = _arr2[_e]
+				_insert_obj_pos = _e
+				break;
+				}
+		}
+	
+	/* insert all instances into the new array
+	depending on the "move" argument */
+	var _insertpos;
+	switch (move)
+		{
+		case MOVE.UP: // insert above _insert_obj
+			_insertpos = _insert_obj_pos+1
+			for (var _s = _smax-1; _s >= 0; _s--)
+				array_insert(_arr2,_insertpos,_sel_inst_arr_sorted[_s])
+			break;
+		case MOVE.DOWN: // insert below _insert_obj
+			_insertpos = _insert_obj_pos
+			for (var _s = _smax-1; _s >= 0; _s--)
+				array_insert(_arr2,_insertpos,_sel_inst_arr_sorted[_s])
+			break;
+		case MOVE.TOP:
+			for (var _s = 0; _s < _smax; _s++)
+				array_push(_arr2,_sel_inst_arr_sorted[_s])
+			break;
+		case MOVE.BOTTOM:
+			for (var _s = _smax-1; _s >= 0; _s--)
+				array_insert(_arr2,0,_sel_inst_arr_sorted[_s])
+			break;
+		default:
+			show_debug_message("layer_instances_change_layer() ERROR: "
+				+"illegal argument \"move\"! use enum MOVE.*")
+			return(false)
+			break;
+		}
+	
+	/*
+	re-add all of the instances of the target layer (including moved ones).
+	by default, gamemaker puts the last instance added onto the
+	very bottom of the layer (visually), so to counter that we
+	add them in reverse.
+	*/
+	var _inst;
+	_emax = array_length(_arr2)
+	for (var _e = _emax-1; _e >= 0; _e--)
+		{
+		_inst = layer_instance_get_instance(_arr2[_e])
+		if (_inst == -1)
+			continue;
+		layer_add_instance(target_layer,_inst)
+		}
+	
+	return(true)
+	}
+
+
+/// @desc	Change the draw order for an instance within it's current layer.
+/// @arg	{Id.Instance}	instance			Instance to change the draw order for.
+/// @arg	{Real}			move				Use one of these: MOVE.UP, MOVE.DOWN, MOVE.TOP or MOVE.BOTTOM.
+/// @arg	{Id.Instance}	insert_relative_to	Optional (only works with MOVE.UP and MOVE.DOWN): Define an instance below or above which to insert other instnaces.
+function layer_instance_change_draw_order(instance,move,insert_relative_to=noone)
+	{
+	with (instance)
+		{
+		// fetch the array containing all layer elements
+		var _arr = layer_get_all_elements(layer);
+		
+		// make sure insert object is in the same layer as "instance" (if provided)
+		var _insert_obj = noone;
+			if (insert_relative_to != noone)
+				if (instance_exists(insert_relative_to))
+					if (insert_relative_to.layer == layer)
+						_insert_obj = insert_relative_to
+		
+		/* find instance's position in the array and delete it
+		also find the _insert_obj's position and remember it (if provided) */
+		var _mypos = -1;
+		var _myeid = -1;
+		var _inspos = -1;
+		var _lay_inst;
+		var _emax = array_length(_arr);
+		for (var _e = 0; _e < _emax; _e++)
+			{
+			_lay_inst = layer_instance_get_instance(_arr[_e])
+			if (_lay_inst == id)
+				{
+				_mypos = _e
+				_myeid = _arr[_e]
+				array_delete(_arr,_mypos,1)
+				_e--
+				_emax--
+				continue;
+				}
+			if (_lay_inst == _insert_obj)
+				{
+				_inspos = _e
+				continue;
+				}
+			}
+		
+		// if instance is (was) in the array, modify it's position
+		if (_mypos != -1)
+			{
+			// define where to move the instance to inside the array/layer
+			var _targetpos = _mypos;
+			switch (move)
+				{
+				case MOVE.UP:
+					if (_inspos != -1) // if inserting above obj
+						_targetpos = _inspos+1
+					else
+						_targetpos += 1
+					break;
+				case MOVE.DOWN:
+					if (_inspos != -1) // if inserting below obj
+						_targetpos = _inspos
+					else
+						_targetpos -= 1
+					break;
+				case MOVE.TOP:
+					_targetpos = _emax
+					break;
+				case MOVE.BOTTOM:
+					_targetpos = 0
+					break;
+				}
+			
+			// make sure that the target position is in bounds
+			_targetpos = clamp(_targetpos,0,_emax)
+			
+			// insert the instance into the desired position
+			array_insert(_arr,_targetpos,_myeid)
+			
+			/*
+			re-add all of the instances of the current layer.
+			by default, gamemaker puts the last instance added onto the
+			very bottom of the layer (visually), so to counter that we
+			add them in reverse.
+			*/
+			var _inst;
+			for (var _e = _emax-1; _e >= 0; _e--)
+				{
+				_inst = layer_instance_get_instance(_arr[_e])
+				layer_add_instance(layer,_inst)
+				}
+			}
+		}
+	}
+
+
+/// @desc	Change the draw order for instances within their current layer.
+/// @arg	{Id.Layer}							target_layer		Layer to check for selected instances.
+/// @arg	{Id.Instance,Array.<Id.Instance>}	instances			Instance(s) to change the draw order for.
+/// @arg	{Real}								move				Use one of these: MOVE.UP, MOVE.DOWN, MOVE.TOP or MOVE.BOTTOM.
+/// @arg	{Id.Instance}						insert_relative_to	Optional (only works with MOVE.UP and MOVE.DOWN): Define an instance below or above which to insert other instnaces.
+/// @return {Bool}
+function layer_instances_change_draw_order(target_layer,instances,move,insert_relative_to=noone)
+	{
+	// fetch the array containing all layer elements
+	var _arr = layer_get_all_elements(target_layer);
+	var _emax = array_length(_arr);
+	if (_emax == 0)
+		{
+		show_debug_message("layer_instances_change_draw_order() ERROR: "
+			+"layer provided is empty!")
+		return(false)
+		}
+	
+	// put selected instances in an array
+	var _sel_inst_arr = [];
+	if (is_array(instances))
+		array_copy(_sel_inst_arr,-1,instances,0,array_length(instances))
+	else
+		_sel_inst_arr[0] = instances
+	
+	// set up _insert_obj
+	var _insert_obj = noone;
+	var _insert_obj_eid = -1;
+	with (insert_relative_to)
+		{
+		if (self.layer == target_layer)
+			_insert_obj = id
+		}	
+	
+	/* move selected instances and their positons to new arrays
+	in the order they are currently drawn and delete them from
+	the original array if and when neccesary */
+	var _sel_inst_arr_sorted = [];
+	var _sel_inst_arr_sorted_pos = [];
+	var _sel_inst_pos_min = -1;
+	var _sel_inst_pos_max = -1;
+	var _del_arr = [];
+	var _layerinstid, _do_delete;
+	for (var _e = 0; _e < _emax; _e++)
+		{
+		_do_delete = 0
+		_layerinstid = layer_instance_get_instance(_arr[_e])
+		if (_layerinstid == -1)
+			continue;
+		if (_insert_obj != noone)
+			{
+			if (_insert_obj == _layerinstid)
+				_insert_obj_eid = _arr[_e]
+			if (move == MOVE.UP) or (move == MOVE.DOWN)
+				_do_delete = 1
+			}
+		if (move == MOVE.TOP) or (move == MOVE.BOTTOM)
+			_do_delete = 1
+		if (array_contains(_sel_inst_arr,_layerinstid))
+		and (_layerinstid != _insert_obj)
+			{
+			array_push(_sel_inst_arr_sorted,_arr[_e])
+			array_push(_sel_inst_arr_sorted_pos,_e)
+			if (_do_delete)
+				array_push(_del_arr,_e)
+			else
+				{
+				if (_sel_inst_pos_min == -1)
+					_sel_inst_pos_min = _e
+				if (_sel_inst_pos_max < _e)
+					_sel_inst_pos_max = _e
+				}
+			}
+		}
+	var _dmax = array_length(_del_arr);
+	for (var _d = _dmax-1; _d >= 0; _d--)
+		array_delete(_arr,_del_arr[_d],1)
+	_emax = array_length(_arr)
+	var _smax = array_length(_sel_inst_arr_sorted);
+	if (_smax == 0)
+		{
+		show_debug_message("layer_instances_change_draw_order() ERROR: "
+			+"no instances provided, or they don't exist in the layer provided!")
+		return(false)
+		}
+	
+	/* re-add all instances into the original array
+	depending on the "move" argument */
+	var _insertpos;
+	switch (move)
+		{
+		case MOVE.UP:
+			if (_insert_obj != noone) // insert above obj
+				{
+				_insertpos = -1
+				for (var _e = 0; _e < _emax; _e++)
+					if (_arr[_e] == _insert_obj_eid)
+						{
+						_insertpos = _e
+						break;
+						}
+				for (var _s = _smax-1; _s >= 0; _s--)
+					array_insert(_arr,_insertpos+1,_sel_inst_arr_sorted[_s])
+				}
+			else // move up relatively (and delete at current pos)
+				{
+				if (_sel_inst_pos_max >= _emax-1)
+					{
+					show_debug_message("layer_instances_change_draw_order() ERROR: "
+						+"selection is already as high as it can go!")
+					return(false)
+					}
+				else
+					{
+					for (var _s = _smax-1; _s >= 0; _s--)
+						{
+						_insertpos = _sel_inst_arr_sorted_pos[_s]
+						array_delete(_arr,_insertpos,1)
+						array_insert(_arr,_insertpos+1,_sel_inst_arr_sorted[_s])
+						}
+					}
+				}
+			break;
+		case MOVE.DOWN:
+			if (_insert_obj != noone) // insert below obj
+				{
+				_insertpos = -1
+				for (var _e = 0; _e < _emax; _e++)
+					if (_arr[_e] == _insert_obj_eid)
+						{
+						_insertpos = _e
+						break;
+						}
+				for (var _s = _smax-1; _s >= 0; _s--)
+					array_insert(_arr,_insertpos,_sel_inst_arr_sorted[_s])
+				}
+			else // move down relatively (and delete at current pos)
+				{
+				if (_sel_inst_pos_min <= 0)
+					{
+					show_debug_message("layer_instances_change_draw_order() ERROR: "
+						+"selection is already as low as it can go!")
+					return(false)
+					}
+				else
+					{
+					for (var _s = 0; _s < _smax; _s++)
+						{
+						_insertpos = _sel_inst_arr_sorted_pos[_s]
+						array_delete(_arr,_insertpos,1)
+						array_insert(_arr,_insertpos-1,_sel_inst_arr_sorted[_s])
+						}
+					}
+				}
+			break;
+		case MOVE.TOP:
+			for (var _s = 0; _s < _smax; _s++)
+				array_push(_arr,_sel_inst_arr_sorted[_s])
+			break;
+		case MOVE.BOTTOM:
+			for (var _s = _smax-1; _s >= 0; _s--)
+				array_insert(_arr,0,_sel_inst_arr_sorted[_s])
+			break;
+		default:
+			show_debug_message("layer_instances_change_draw_order() ERROR: "
+				+"illegal argument \"move\"! use enum MOVE.*")
+			return(false)
+			break;
+		}
+	
+	/*
+	re-add all of the instances of the current layer.
+	by default, gamemaker puts the last instance added onto the
+	very bottom of the layer (visually), so to counter that we
+	add them in reverse.
+	*/
+	var _inst;
+	_emax = array_length(_arr)
+	for (var _e = _emax-1; _e >= 0; _e--)
+		{
+		_inst = layer_instance_get_instance(_arr[_e])
+		if (_inst == -1)
+			continue;
+		layer_add_instance(target_layer,_inst)
+		}
+	
+	return(true)
+	}
